@@ -200,7 +200,7 @@ server <- function(input, output, session) {
             houses_df1 <- subset(houses_df, houses_df$bedrooms_ag >= as.numeric(input$bedvar) &
                                             houses_df$bathrooms >= as.numeric(input$bathvar) &
                                             houses_df$bathrooms >= as.numeric(input$parkvar) &
-                                            houses_df$final_price <= input$budget1 &
+                                            houses_df$list_price <= input$budget1 &
                                             houses_df$sqft >= input$sqftvar
             )
             if(input$distvar2 != "All Districts") {
