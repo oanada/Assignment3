@@ -53,7 +53,7 @@ library(strex)
 leaflet(options = leafletOptions(minZoom = 0, maxZoom = 18))  # Set value for the minZoom and maxZoom settings.
 load("./www/shinyenvdata.RData")
 distchoices <- c("All Districts", sort(to_neigh$AREA_NAME))
-
+register_google(key = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
 betas <- c(b0 <- -507305.3772,   #(Intercept)
            b1 <- 3.7372,         #mean_district_income
            b2 <- -401.9158,      #district_code
