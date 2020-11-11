@@ -1,0 +1,865 @@
+---
+title: "GroupA - CourseProject(Final Assignment)"
+author: 'Group A - Autumn Class:  Junylou Daniel, Oana Damian, Robin Mathew, Torsten Meyer'
+date: "November 2020"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = FALSE,
+	message = FALSE,
+	warning = FALSE,
+	out.width="100%",
+	fig.fullwidth=TRUE, 
+	fig.align='center',
+	fig.asp = .6
+)
+```
+
+
+
+# 1. Business case
+
+The Covid event created new incentives for city dwellers to move from condos to detached either in or outside Toronto.
+
+In this contest we propose a simple tool for getting informed on the transactions that have happened in Toronto with the purpose of both:
+
+1.  estimating of the market value of a property in Toronto given location and other userr defined features
+
+2.  and, given budget and other constraints,visualizing the properties sold.
+ 
+At the moment, given the project time budget constraint, even though we have been able to web scrape the latest available listings on zoocasa but did not have sufficient time to clean and process the data. Instead, toillustrate the business case solution, we used a pre-existing dataset available as at H2 2019 which was pre-cleaned and processed.
+
+
+# 2. Project data
+
+
+### 2.1 Data sources
+
+The current project builds upon a pre-existing project on Toronto housing price prediction available at <https://github.com/slavaspirin/Toronto-housing-price-prediction>
+
+The dataset used from the pre-existing project is available at <https://github.com/slavaspirin/Toronto-housing-price-prediction/raw/master/houses_edited.csv>
+
+The data from the pre-existing project is based on web scarping of Zoocasa listings of previously sold properties.
+Unfortunately the data does not have a time stamp. We understand that the  primary listing data was scraped from <https://www.zoocasa.com> and contains a list of sold properties available as sometimes in H2 2019.
+
+
+We were able to scrap a scoring of Toronto neighborhoods from <https://torontolife.com/neighbourhood-rankings/> to complemet the average 2016 personal income data of each district that was already available in the pre-existing project.
+ 
+
+Toronto neighborhoods data for geographical mapping was available from <https://open.toronto.ca/dataset/neighbourhoods/>.
+
+We were also able to obtain location data for the Toronto subway stations from <https://scruss.com/blog/2005/12/14/toronto-subway-station-gps-locations/#comments>.
+For the line currently in construction, Line 5 Eglington, the subway stations latitude and longitude were obtained from <https://en.wikipedia.org/wiki/Line_5_Eglinton>.
+
+### 2.2 Data description
+
+
+#### Zoocasa listings in the pre-existing project dataset
+
+The data available includes 15234 listings of Toronto properties with the following available features.
+
+Variable Name |   Description
+--------------|---------------------------------------------
+title         | text, Zoocasa short description of the listing
+final price   | numeric,sale price
+listed price  | numeric, listed price
+bedrooms      | text ordinal, 0 beds, 0 + 1 beds, 1 beds  ... 9 + 5 beds
+bedrooms>grade| numeric, number of bedrooms above grade
+bedrooms<grade| numeric, number of bedrooms below grade
+bathrooms     | mumeric, 1 to 11
+sqft          | Missing or numeric between 259 to 4374 
+description   | text, Zoocasa long description of the listed property
+mls           | text, zoocasa identifier
+type          | text categorical, Att/Row/Twnhouse, Comm Element Condo, Condo Apt, Condo Townhouse, Co-Op Apt, Co-Ownership Apt, Detached, Link, Plex, Semi-Detached, Store W/Apt/Offc
+full link     | text,Zoocasa web link
+lat           | numeric, property location latitude
+long          | numeric, property location longitude
+city district | text, Toronto city district
+district code | numeric, Toronto city district identifier code
+mean district income| numeric, Toronto city district average household income based on 2016 statics
+
+Based on the "bedrooms>grade" and "bedrooms<grade" we created an aggregated bedrooms feature calculated as "bedrooms>grade"+bedrooms<grade/2 to account for the smaller size of the below grade bedrooms.
+
+Based on the "listed price" and "final price " we created an "price differential" feature calculated as  "final price"/"listed price" - 1.
+Even though such a feature is not necessarily useful for predicting the sale price, it is informative with respect to the pricing error that property sellers have encountered and may be informed upon with when listing a property.
+
+#### Toronto subway - walking distance to the closest subway station
+
+Based on location data for the Toronto subway stations (including Line 5 Eglinton) we were able to estimate the closest subway station to a property and estimate, assuming and average walking speed of 5 km/h the walking distance to the closest subway station for each  property.
+
+
+
+#### Toronto neighbourhood rankings
+
+Variable Name  |   Description
+---------------|---------------------------------------------
+district code  | numeric,Toronto city district identifier code
+area name      | text,Toronto city district name
+description    | text,description of the district
+housing score  | numeric, score based on affordability (cost vs. income), appreciation (yoy change) and rate of home ownership
+safety score   | numeric, score based on number of crimes
+transit score  | numeric, score based on number of TTC stops, walk and transit scores, commuting times, numbers of commuters who walk, cycle or take TTC
+shopping score | numeric, score based on number of groceries, markets and pharmacies per km2
+health score   | numeric, score based on number of medical and mental health services per capita, number of senior care services per senior, number of people with family doctors and physical activity levels among residents
+entertainment score | score based on numeric,number of gyms, sport facilities, bars and restaurants per km2
+community score | numeric, score based on voter turnout, community space use per capita, how many people report a sense of community belonging
+education score | numeric, score based on number of schools per child, number of daycares per child, share of residents with post-secondary education
+diversity score | numeric, score based on % of visible minorities , people whose mother tongues are not French or English, and first- and second generation immigrants
+employment score | numeric, score based on employment and unemployment rates, the share of residents below the poverty line, the share of high income residents and the share of self employed residents
+
+
+#### Distance to closest subway
+
+
+```{r, message = FALSE, echo = FALSE, out.width="100%",fig.fullwidth=TRUE, fig.align='center',fig.asp = .6}
+# libraries
+library(data.table)
+
+library(dplyr)
+library(readr)
+library(stats)
+
+library(corrplot)
+library(ggplot2)
+library(gridExtra)
+
+library(leaflet)
+library(maps)
+library(rgdal)
+
+
+library(MASS)
+
+library(mice)
+
+library(Hmisc)
+
+
+### clear workspace
+rm(list = ls(all.names = TRUE)) #will clear all objects includes hidden objects.
+#memory.limit(size=50000)  #gc(verbose=FALSE) #free up memory and report the memory usage.
+
+# seed for all random number generators
+RandomNbGenSeed = 5000
+set.seed(RandomNbGenSeed)
+
+
+```
+
+# 2.3 Data preparation
+
+The data pertaining to housing listings was cleaned,aggregated and readily available on 
+<https://github.com/slavaspirin/Toronto-housing-price-prediction/raw/master/houses_edited.csv>
+
+
+```{r, message = FALSE, results='hide',warning=FALSE, echo = FALSE, out.width="100%",fig.fullwidth=TRUE, fig.align='center',fig.asp = .6}
+
+### ==============================================================
+### read house listings data files
+### ==============================================================
+
+
+# housing listing data
+INPUT_file_path="https://github.com/slavaspirin/Toronto-housing-price-prediction/raw/master/houses_edited.csv"
+DF<-read.csv(INPUT_file_path, header = TRUE)
+
+DF$mean_district_income_bins<-case_when( #unique((quantile(DF$mean_district_income, probs = seq(0,1, length.out = 10),na.rm = TRUE)/10)*10)
+  DF$mean_district_income <=31500 ~ "( 0   - 31.5K]",
+  DF$mean_district_income <=34000 ~ "(31.5 - 34.0K]",
+  DF$mean_district_income <=37500 ~ "(34.0 - 37.5K]",
+  DF$mean_district_income <=45000 ~ "(37.5 - 45.0K]",
+  DF$mean_district_income <=50500 ~ "(45.0 - 50.5K]",
+  DF$mean_district_income <=54000 ~ "(50.5 - 54.0K]",
+  DF$mean_district_income <=57500 ~ "(54.0 - 57.5K]",
+  DF$mean_district_income <=70000 ~ "(57.5 - 70.0K]",
+  DF$mean_district_income <=80000 ~ "(70.0 - 80.0K]",
+  DF$mean_district_income >80000 ~  "(80.0K+",
+)
+
+DF$sqft_bins<-case_when(    #unique((quantile(DF$sqft, probs = seq(0,1, length.out = 10),na.rm = TRUE)/10)*10)
+  DF$sqft <=550  ~ "( 250 - 550]",
+  DF$sqft <=650  ~ "( 550 - 650]",
+  DF$sqft <=750  ~ "( 650 - 750]",
+  DF$sqft <=850  ~ "( 750 - 850]",
+  DF$sqft <=950  ~ "( 850 - 950]",
+  DF$sqft <=1100 ~ "( 950 - 1100]",
+  DF$sqft <=1300 ~ "(1100 - 1300]",
+  DF$sqft <=1800 ~ "(1300 - 1800]",
+  DF$sqft >1800 ~  "(1800+",
+)
+
+DF$sqft_bins<-as.factor(DF$sqft_bins)
+
+DF$type<-as.factor(DF$type)
+
+DF$bathrooms<-as.factor(DF$bathrooms)
+
+DF$bedrooms_all<-as.factor(DF$bedrooms_ag+DF$bedrooms_bg/2)
+
+DF$pool_available<-as.factor(grepl("Pool|pool", DF$description))
+
+DF$price_diff<-DF$final_price/DF$list_price-1
+
+
+### ==============================================================
+### read & add add TO district rankings data
+### ==============================================================
+
+INPUT_file_path="https://github.com/oanada/Assignment3/raw/main/TO_Neighbourhood.csv"
+DF_TO_ranking<-read.csv(INPUT_file_path, header = TRUE)
+INPUT_retained_fields<-c('district_code','safety','transit','shopping','health','entertainment','community','diversity','education','employment')
+INPUT_retained_fields_rename<-c('district_code','TO_rank_safety','TO_rank_transit','TO_rank_shopping','TO_rank_health','TO_rank_entertainment','TO_rank_community','TO_rank_diversity','TO_rank_education','TO_rank_employment')
+DF_TO_ranking<-DF_TO_ranking[,INPUT_retained_fields]
+names(DF_TO_ranking)<-INPUT_retained_fields_rename
+DF<-merge(x=DF,y=DF_TO_ranking,by="district_code",all.x=TRUE)
+
+
+DF$TO_rank_transit_bins<-as.factor(
+  floor(DF$TO_rank_transit/(max(DF$TO_rank_transit)-min(DF$TO_rank_transit))*10)*
+  (max(DF$TO_rank_transit)-min(DF$TO_rank_transit))/10)
+
+DF$TO_rank_shopping_bins<-as.factor(
+  floor(DF$TO_rank_shopping/(max(DF$TO_rank_shopping)-min(DF$TO_rank_shopping))*10)*
+  (max(DF$TO_rank_shopping)-min(DF$TO_rank_shopping))/10)
+
+DF$TO_rank_safety_bins<-as.factor(
+  floor(DF$TO_rank_safety/(max(DF$TO_rank_safety)-min(DF$TO_rank_safety))*10)*
+  (max(DF$TO_rank_safety)-min(DF$TO_rank_safety))/10)
+
+DF$TO_rank_health_bins<-as.factor(
+  floor(DF$TO_rank_health/(max(DF$TO_rank_health)-min(DF$TO_rank_diversity))*10)*
+  (max(DF$TO_rank_health)-min(DF$TO_rank_health))/10)
+
+
+DF$TO_rank_entertainment_bins<-as.factor(
+  floor(DF$TO_rank_entertainment/(max(DF$TO_rank_entertainment)-min(DF$TO_rank_entertainment))*10)*
+  (max(DF$TO_rank_entertainment)-min(DF$TO_rank_entertainment))/10)
+
+DF$TO_rank_community_bins<-as.factor(
+  floor(DF$TO_rank_community/(max(DF$TO_rank_community)-min(DF$TO_rank_community))*10)*
+  (max(DF$TO_rank_community)-min(DF$TO_rank_community))/10)
+
+
+DF$TO_rank_diversity_bins<-as.factor(
+  floor(DF$TO_rank_diversity/(max(DF$TO_rank_diversity)-min(DF$TO_rank_diversity))*10)*
+  (max(DF$TO_rank_diversity)-min(DF$TO_rank_diversity))/10)
+
+DF$TO_rank_education_bins<-as.factor(
+  floor(DF$TO_rank_education/(max(DF$TO_rank_education)-min(DF$TO_rank_education))*10)*
+  (max(DF$TO_rank_education)-min(DF$TO_rank_education))/10)
+
+DF$TO_rank_employment_bins<-as.factor(
+  floor(DF$TO_rank_employment/(max(DF$TO_rank_employment)-min(DF$TO_rank_employment))*10)*
+  (max(DF$TO_rank_employment)-min(DF$TO_rank_employment))/10)
+
+
+
+
+
+### ==============================================================
+### read & add subway proximity data
+### ==============================================================
+
+INPUT_file_path="https://github.com/oanada/Assignment3/raw/main/GPS_locations_subway_TO.csv"
+DF_TO_subways<-read.csv(INPUT_file_path, header = TRUE)
+
+
+DF$dist_2_subway_km <- NA
+DF$dist_2_subway_min <- NA
+DF$closest_subway_station <- NA
+DF$closest_subway_line <- NA
+
+for (idx_row in seq(length(DF$lat))) 
+{ DF_TO_subways$lat_dist_2_location <-DF_TO_subways$Latitude-DF$lat[idx_row]
+  DF_TO_subways$long_dist_2_location <- DF_TO_subways$Longitude-DF$long[idx_row]
+  DF_TO_subways$dist_2_location_km<- (DF_TO_subways$lat_dist_2_location^2+DF_TO_subways$long_dist_2_location^2)^0.5*10001/90 
+  DF_TO_subways <- DF_TO_subways[order(DF_TO_subways$dist_2_location_km),] 
+
+  
+  DF$dist_2_subway_km[idx_row] <- DF_TO_subways$dist_2_location_km[1]
+  DF$closest_subway_station[idx_row] <- DF_TO_subways$Station_Name[1]
+  DF$closest_subway_line[idx_row] <- DF_TO_subways$Line[1]
+    
+}
+DF$dist_2_subway_min<-round(DF$dist_2_subway_km*60/5)
+DF$dist_2_subway_km<-round(DF$dist_2_subway_km,3)
+
+
+DF$dist_2_subway_min_bins_walk<-case_when(
+  DF$dist_2_subway_min <=5   ~  "( 0-5min]",
+  DF$dist_2_subway_min <=10  ~ "( 5 - 10min]",
+  DF$dist_2_subway_min <=15  ~ "(10 - 15min]",
+  DF$dist_2_subway_min <=25  ~ "(15 - 25min]",
+  DF$dist_2_subway_min <=40  ~ "(25 - 40min]",
+  DF$dist_2_subway_min >40~    "(40min+ - ",
+)
+
+DF$dist_2_subway_min_bins_10min<-as.factor(round(DF$dist_2_subway_min/10)*10)
+
+INPUT_local_folder="C:/Users_Folders/YORK_MLcertificate/Assignment3/"
+
+write.csv(DF, paste0(INPUT_local_folder,"TO_housing_comprehensive_data.csv"))
+
+
+### ==============================================================
+###   read Toronto map data file
+### ==============================================================
+
+
+# Source: https://open.toronto.ca/dataset/neighbourhoods/
+to_neigh_raw <- rgdal::readOGR("https://github.com/oanada/Assignment3/raw/main/Neighbourhoods.geojson")
+to_neigh <- rgdal::readOGR("https://github.com/oanada/Assignment3/raw/main/Neighbourhoods.geojson")
+
+#pal <- colorBin("viridis",domain=c(min(to_neigh$AREA_SHORT_CODE,na.rm = TRUE),max(to_neigh$AREA_SHORT_CODE,na.rm = TRUE)),bins=10)
+#labels <- sprintf("<strong>%s</strong>", to_neigh$AREA_NAME) %>% lapply(htmltools::HTML)
+
+#to_map <- leaflet(to_neigh) %>% setView(lng = -79.378, lat = 43.695, zoom = 10.5 ) %>% addTiles() %>%
+#          addMarkers(lng = -79.3841, lat = 43.6534, popup="Toronto City Hall")
+#to_map  %>% addPolygons(fillColor = ~pal(AREA_SHORT_CODE), weight = 2, opacity = .3, color = "blue",
+#              dashArray = "3", fillOpacity = 0.7, highlight = highlightOptions(weight = 5,
+#              color = "red", dashArray = "", fillOpacity = 0.5, bringToFront = TRUE),
+#              label = labels, labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+#                  textsize = "15px", direction = "auto")) %>%
+#              addLegend(pal = pal, values = to_neigh$AREA_SHORT_CODE, opacity = 0.5, title = "Area Code", position = "bottomright")  
+
+
+# add number of district listings to_neigh file
+DF_districts=DF[,c("district_code")]
+DF_districts=aggregate(x=DF$district_code, by=list(DF$district_code), FUN="length")
+names(DF_districts)=c("AREA_SHORT_CODE","count_listings")
+TEMP_map_data=merge(x=to_neigh@data,y=DF_districts,by="AREA_SHORT_CODE",all.x=TRUE)
+TEMP_map_data[order(TEMP_map_data$X_id),] 
+to_neigh@data$count_listings=TEMP_map_data$count_listings
+
+
+# add mean district income to to_neigh file
+DF_districts=unique(DF[,c("mean_district_income","district_code")])
+DF_districts$AREA_SHORT_CODE=DF_districts$district_code
+TEMP_map_data=merge(x=to_neigh@data,y=DF_districts[,c("mean_district_income","AREA_SHORT_CODE")],by="AREA_SHORT_CODE",all.x=TRUE)
+TEMP_map_data[order(TEMP_map_data$X_id),] 
+to_neigh@data$mean_district_income=TEMP_map_data$mean_district_income
+
+
+
+# add median 3 bedroom house price to to_neigh file
+DF_districts=DF[DF$bedrooms %in%  c('2 + 1 beds','3 beds') & DF$type  %in% c("Detached",	"Semi-Detached")
+                ,c("final_price","district_code")]
+DF_districts=aggregate(x=DF_districts$final_price, by=list(DF_districts$district_code), FUN="mean")
+names(DF_districts)=c("AREA_SHORT_CODE","price_3brd_house")
+TEMP_map_data=merge(x=to_neigh@data,y=DF_districts,by="AREA_SHORT_CODE",all.x=TRUE)
+TEMP_map_data[order(TEMP_map_data$X_id),] 
+to_neigh@data$price_3brd_house=TEMP_map_data$price_3brd_house
+
+
+# add median 3 bedroom condo like  price o to_neigh file
+DF_districts=DF[DF$bedrooms %in%  c('2 + 1 beds','3 beds') & !(DF$type  %in% c("Detached",	"Semi-Detached"))
+                ,c("final_price","district_code")]
+DF_districts=aggregate(x=DF_districts$final_price, by=list(DF_districts$district_code), FUN="mean")
+names(DF_districts)=c("AREA_SHORT_CODE","price_3brd_condo")
+TEMP_map_data=merge(x=to_neigh@data,y=DF_districts,by="AREA_SHORT_CODE",all.x=TRUE)
+TEMP_map_data[order(TEMP_map_data$X_id),] 
+to_neigh@data$price_3brd_condo=TEMP_map_data$price_3brd_condo
+
+
+```
+
+
+## 2.4 Descriptive statistics
+
+### 2.4.1. Property sale price distribution
+The histogram of sale prices and log sale prices for the most condos, townhouses, detached and semi-detached(the inclusion criteria captures 94% of our listings) indicate that the log transforms shift the distribution closer to a Gaussian one.
+This will allow us to better model the listings with prices around the mode of the distribution and below.
+
+
+One can also observe that the sale relative to listed price has a positively skewed distribution when above zero, meaning that sellers were getting more than listed. Nevertheless, the very high values observed (50% mark up) make us less inclined to use the listed price in our analysis. 
+It is possible there may be a bias related to increasing the marketability of the property and gathering more offers during the listing period.
+
+
+```{r, message = FALSE, echo = FALSE,out.width="100%",fig.fullwidth=TRUE, fig.align='center',fig.asp =0.25}
+#sum(DF$type %in%  c('Detached','Condo Townhouse','Condo Apt','Semi-Detached'))/length(DF$lat)
+
+ggplot(data = DF[DF$type %in%  c('Detached','Condo Townhouse','Condo Apt','Semi-Detached'),], 
+            mapping = aes(x = final_price/1000000)) +
+     geom_histogram(aes(fill=factor(type),y = (..count..)/tapply(..count..,..PANEL..,sum)[..PANEL..]), alpha=0.5,show.legend = FALSE) +
+     facet_grid(.~type) +
+    labs(title="Sale price distribution by apartment type", 
+       x = 'Sale price in million CAD', 
+       y = 'Percentage') +
+     theme_bw()+theme(axis.title = element_text(size = 8),plot.title = element_text(size = 10))   
+     
+ggplot(data = DF[DF$type %in%  c('Detached','Condo Townhouse','Condo Apt','Semi-Detached'),],
+            mapping = aes(x = final_price_log)) +
+     geom_histogram(aes(fill=factor(type),y = (..count..)/tapply(..count..,..PANEL..,sum)[..PANEL..]), alpha=0.5,show.legend = FALSE) +
+     facet_grid(.~type) +
+    labs(title="Log sale price distribution by apartment type", 
+       x = 'Log sale price', 
+       y = 'Percentage') +
+     theme_bw() +theme(axis.title = element_text(size = 8),plot.title = element_text(size = 10))
+
+ggplot(data = DF[DF$type %in%  c('Detached','Condo Townhouse','Condo Apt','Semi-Detached'),],
+            mapping = aes(x = price_diff*100)) +
+     geom_histogram(aes(fill=factor(type),y = (..count..)/tapply(..count..,..PANEL..,sum)[..PANEL..]), alpha=0.5,show.legend = FALSE) +
+     facet_grid(.~type) +
+    labs(title="Sale/listed-1 - distribution by apartment type", 
+       x = 'Sale vs listed price differece in percentage points of listed price', 
+       y = 'Percentage') +
+     theme_bw() +theme(axis.title = element_text(size = 8),plot.title = element_text(size = 10))
+```
+
+
+### 2.4.2. Property features characteristics
+An interesting property of condos is related to the subway walking distance feature. Condos are concentrated within less than 39 minutes to the closest subway station as the corresponding histogram abruptly drops around the 39 minutes threshold.
+
+```{r, message = FALSE, echo = FALSE,out.width="100%",fig.fullwidth=TRUE, fig.align='center',fig.asp =0.25}
+
+ggplot(data = DF[DF$type %in%  c('Detached','Condo Townhouse','Condo Apt','Semi-Detached'),], 
+            mapping = aes(x = parking)) +
+     geom_histogram(aes(fill=factor(type),y = (..count..)/tapply(..count..,..PANEL..,sum)[..PANEL..]), alpha=0.5,show.legend = FALSE) +
+     facet_grid(.~type) +
+    labs(title="Parking distribution by apartment type", 
+       x = 'Parking', 
+       y = 'Percentage') +
+     theme_bw()+theme(axis.title = element_text(size = 8),plot.title = element_text(size = 10))    
+
+DF$bathrooms<-as.numeric(DF$bathrooms)
+ggplot(data = DF[DF$type %in%  c('Detached','Condo Townhouse','Condo Apt','Semi-Detached'),], 
+            mapping = aes(x = bathrooms))+
+     geom_histogram(aes(fill=factor(type),y = (..count..)/tapply(..count..,..PANEL..,sum)[..PANEL..]), alpha=0.5,show.legend = FALSE) +
+     facet_grid(.~type) +
+    labs(title="Number of bathrooms distribution by apartment type", 
+       x = 'Parking', 
+       y = 'Percentage') +
+     theme_bw()+theme(axis.title = element_text(size = 8),plot.title = element_text(size = 10))    
+DF$bathrooms<-as.factor(DF$bathrooms)
+
+ggplot(data = DF[DF$type %in%  c('Detached','Condo Townhouse','Condo Apt','Semi-Detached'),], 
+            mapping = aes(x =dist_2_subway_min))+
+     geom_histogram(aes(fill=factor(type),y = (..count..)/tapply(..count..,..PANEL..,sum)[..PANEL..]), alpha=0.5,show.legend = FALSE) +
+     facet_grid(.~type) +
+    labs(title="Walking distance to subway (min) by apartment type", 
+       x = 'Walking distance to subway (min)', 
+       y = 'Percentage') +
+     theme_bw()+theme(axis.title = element_text(size = 8),plot.title = element_text(size = 10))    
+
+```
+
+### 2.4.3. Toronto districts descriptive statistics
+
+The Toronto district scores seem to be designed to be uniformly distributed, in contrast with the district average income which seems to be non-uniform.
+
+```{r, message = FALSE, echo = FALSE,out.width="100%",fig.fullwidth=TRUE, fig.align='center',fig.asp =0.7}
+TO_districts=unique(DF[,c('TO_rank_safety','TO_rank_transit','TO_rank_shopping','TO_rank_health','TO_rank_entertainment','TO_rank_community','TO_rank_diversity','TO_rank_education','TO_rank_employment','mean_district_income')])
+names(TO_districts)<-c('safety','transit','shopping','health','entertainment','community','diversity','education','employment','avg. income')
+
+
+hist.data.frame(TO_districts)
+```
+
+
+
+
+One can observe the following strong correlations:
+
+Given the nature of the district average income having a different distribution that teh districts scores we computes the Spearman (rank) correlation.
+
+a) the diversity score is strongly negatively correlated with the employment score and the average district income,
+b) the employment score is strongly positively correlated with the average district income and 
+c) transit, shopping end entertainment scores are highly correlated.
+
+We have also computed the Pearson correlations and observed that the most extreme values was 0.83 (shopping vs. entertainment scores). As such,  these correlations  would not pose problems in a linear regression (i.e. the X'X matrix is invertible).
+
+
+```{r, message = FALSE, echo = FALSE,out.width="100%",fig.fullwidth=TRUE, fig.align='center',fig.asp =1}
+
+M=cor(TO_districts,method='spearman')
+res1 <- cor.mtest(TO_districts, conf.level = 0.99,method='spearman')
+diag(res1$p)<-diag(res1$p)+1
+col1 <- colorRampPalette(c("#7F0000","red","yellow","blue","#00007F"))
+corrplot(M,  type = "upper",method="square", order="hclust",hclust.method="median",
+         p.mat = res1$p, insig = "blank",addCoef.col = "#00003F",tl.col="black",tl.srt=40)
+
+
+# M=cor(TO_districts)
+# res1 <- cor.mtest(TO_districts, conf.level = 0.99)
+# diag(res1$p)<-diag(res1$p)+1
+# col1 <- colorRampPalette(c("#7F0000","red","yellow","blue","#00007F"))
+# corrplot(M,  type = "upper",method="square", order="hclust",hclust.method="median",
+#          p.mat = res1$p, insig = "blank",addCoef.col = "#00003F",tl.col="black",tl.srt=40)
+
+```
+
+
+### 2.4.4. Correlation - sale price and properties features vs. with Toronto's districts scores and average income
+
+We have computed the Pearson correlations to observe how all property and location features are interconnected.
+As expected the size of the apartment influences the sale price.
+In terms of district location, district average income and teh sores for safety, diversity and employment are also significantly correlated (1% p-value test) with the sale price.
+
+Unexpectedly, the "subway walking distance" to has a negative, small correlation with the final sale price. One of the reasons could be related to difference in this relationship across types of properties. For condos, subway closeness is much more important than for detached,. For detached houses, the size of the property, and implicitly the price, is higher, the further away one gets from the subway lines.
+
+
+
+We note that the most extreme correlation values are below 0.85 (excluding the "bedroom>grade" vs "Bedrooms Agg" correlation). As such, these correlations  would not pose problems in a linear regression (i.e. the X'X matrix is invertible).
+
+
+```{r, message = FALSE, echo = FALSE,out.width="100%",fig.fullwidth=TRUE, fig.align='center',fig.asp =1}
+
+TEMP_DF<-DF[,c("final_price_log",'sqft',"bathrooms","parking",'bedrooms_ag','bedrooms_bg','dist_2_subway_min',
+               'TO_rank_safety','TO_rank_transit','TO_rank_shopping','TO_rank_health','TO_rank_entertainment','TO_rank_community','TO_rank_diversity','TO_rank_education','TO_rank_employment','mean_district_income')]
+TEMP_DF$bathrooms<-as.numeric(TEMP_DF$bathrooms)
+TEMP_DF$bedrooms_agg<-TEMP_DF$bedrooms_ag+TEMP_DF$bedrooms_bg/2
+
+TEMP_DF<-TEMP_DF[,c("final_price_log",'sqft',"bathrooms","parking",'bedrooms_ag','bedrooms_bg','bedrooms_agg','dist_2_subway_min','mean_district_income',
+               'TO_rank_safety','TO_rank_transit','TO_rank_shopping','TO_rank_health','TO_rank_entertainment',
+               'TO_rank_community','TO_rank_diversity','TO_rank_education','TO_rank_employment')]
+
+names(TEMP_DF)<-c("Log sale price",'Surface',"Bathrooms","Parking",'Bedrooms>Grade','Bedrooms<Grade','Bedrooms Agg','Subway Walking Distance','District avg income','District safety','District transit','District shopping','District health','District entertainment','District community','District diversity','District education','District employment')
+
+
+
+M=cor(TEMP_DF,use="pairwise.complete.obs")
+M<-M[,c("Log sale price",'Surface',"Bathrooms","Parking",'Bedrooms>Grade','Bedrooms<Grade','Bedrooms Agg','Subway Walking Distance')]
+
+res1 <- cor.mtest(TEMP_DF, conf.level = 0.99,use="pairwise.complete.obs")
+diag(res1$p)<-diag(res1$p)+1
+res1$p<-res1$p[,c(1,2,3,4,5,6,7,8)]
+col1 <- colorRampPalette(c("#7F0000","red","yellow","blue","#00007F"))
+corrplot(round(M,1),  type = "lower",method="square",
+         p.mat = res1$p, insig = "blank",addCoef.col = "#00003F",tl.col="black",tl.srt=10)
+
+```
+
+
+
+
+
+### 2.4.5. Sale price distribution in relation with various features
+
+```{r, message = FALSE, echo = FALSE,out.width="100%",fig.fullwidth=TRUE, fig.align='center',fig.asp =0.38}
+
+### ==============================================================
+# price descriptive statistics by various features
+### ==============================================================
+
+INPUT_vars_boxplots<- c( # Var 1 # var2    # var1 nice name    # var2 nice name   # comments
+"type",                      "final_price_log", "House type" ,             "Log sale price"   ,
+"As expected, there is a clear dependency between the type of house and the sale price. Condos have a price distribution centered at a lowar level than detached, Plex and Semi-Detached.",
+
+"bedrooms_all",              "final_price_log", "Agg bedrooms=#bedrooms>grade + #bedrooms<grade/2 " ,           "Log sale price"   ,
+"As expected, there is a clear increasing relationship between the number of bedrooms and the sale price",
+
+"bathrooms",                 "final_price_log", "Bathrooms"     ,          "Log sale price"   ,
+"As expected, there is a clear increasing relationship between the number of bathrooms and the sale price",
+
+"sqft_bins",                "final_price_log", "Avg. district income" ,   "Log sale price"   ,
+"There is a clear increasing relationship between the surface of property and the sale price. One can observe that a lot of properties sold have missing square footage data which will need to be imputed to fill in missing data.",
+
+"dist_2_subway_min_bins_walk",  "final_price_log", "Walking distance to subway (min)" ,   "Log sale price"   ,
+"There is a not a clear relationship between the distance to the closest subway and the sale price. This might be due to an uneven mix of types of properties which depends on subway proximity. For condos, subway closeness is much more important than for detached. For detached houses, the size of the property, and implicitly the price, is higher, the further away one gets from the subway lines.",
+
+"mean_district_income_bins", "final_price_log", "Avg. district income" ,   "Log sale price"   ,
+"There is a clear increasing relationship between the district wealth level and the sale price",
+
+
+"TO_rank_transit_bins", "final_price_log", "District transit score" ,   "Log sale price"   ,
+"Although there is no clear relationship between the neignourhood transit score and the average level of the sale price, the shape of the  sale price distribution varies visibly which might be related to different proparty types mixes, depending on the district and the transit network",
+
+"TO_rank_shopping_bins", "final_price_log", "District shopping score" ,   "Log sale price"   ,
+"Although there is no clear relationship between the district shopping score and the sale price",
+
+"TO_rank_health_bins", "final_price_log", "District healthcare score" ,   "Log sale price"   ,
+"Although there is no clear relationship between the neignourhood healthcare score and the average level of the sale price, the shape of the sale price distribution varies visibly which might be related to different proparty types mixes, depending on the district and the healthcare network",
+
+"TO_rank_entertainment_bins", "final_price_log", "District entertainment score" ,   "Log sale price",
+"There is a clear ... relationship between the district healthcare entertainment and the sale price",
+
+"TO_rank_community_bins", "final_price_log", "District community score" ,   "Log sale price",
+"There is a no clear relationship between the district healthcare entertainment and the sale price",
+
+"TO_rank_diversity_bins", "final_price_log", "District diversity score" ,   "Log sale price",
+"There is a clear decreasing relationship between the district community score and the sale price",
+
+"TO_rank_education_bins", "final_price_log", "District education score" ,   "Log sale price",
+"There is a no clear relationship between the district education score and the sale price",
+
+"TO_rank_employment_bins", "final_price_log", "District employment score" ,   "Log sale price",
+"There is a clear increasing relationship between the district employment score and the sale price"
+
+)  
+
+
+
+INPUT_vars_boxplots<-matrix(INPUT_vars_boxplots,ncol=5,byrow=TRUE)
+
+for(idx_var in 1:nrow(INPUT_vars_boxplots))
+  
+{ print(INPUT_vars_boxplots[idx_var,5])
+  
+  DF$VAR_TGT_1<-DF[,INPUT_vars_boxplots[idx_var,1]]
+  DF$VAR_TGT_2<-DF[,INPUT_vars_boxplots[idx_var,2]]
+  
+ p1<-ggplot(DF,aes(x=VAR_TGT_1, y=VAR_TGT_2, fill=VAR_TGT_1)) + 
+    geom_violin(width=1.2,show.legend = FALSE,linetype = 0) +
+    geom_boxplot(width=.1,show.legend = FALSE) +
+    labs(y=INPUT_vars_boxplots[idx_var,4], x=INPUT_vars_boxplots[idx_var,3], 
+        title=paste0(INPUT_vars_boxplots[idx_var,4], " distribution by ",INPUT_vars_boxplots[idx_var,3]))+
+    theme_bw()
+ 
+ 
+ p1<-p1+theme(axis.text.x=element_text(angle=20,size=7,vjust =0.5),axis.text=element_text(size=7),axis.title = element_text(size = 7),
+          plot.title = element_text(size=9),legend.position="none")
+
+
+ p2<- ggplot(DF, aes(x=VAR_TGT_1,fill=VAR_TGT_1) ) + 
+      geom_bar(show.legend = FALSE)+
+      labs( y="No listings",x=INPUT_vars_boxplots[idx_var,3], 
+            title=paste0("No listings by ",INPUT_vars_boxplots[idx_var,3]))+ 
+      theme_bw()
+ 
+ p2<-  p2+ theme(axis.text.x=element_text(angle=20,size=7,vjust = 0.5), axis.text=element_text(size=7),axis.title = element_text(size = 7),
+            plot.title = element_text(size=9),legend.position="none")
+  
+ 
+#suppressWarnings(plot(p1))
+#plot(p2)
+suppressWarnings(grid.arrange(p1,p2,ncol=2))
+
+}  
+
+```
+
+
+
+### 2.4.6. Descriptive statistics by geographical district
+The following mappings attempt to provide an overview of the listings available as wel as the relationship between districts and house prices.
+
+One can observe that the listings not uniformly concentrated across Toronto.
+With respect to housing price levels, both the detached and condo market seem to be exhibiting a positive correlation with the district average income( Agincourt, the Beaches to Cliffcrest zone, Princess-Rosethorn), confirming the positive correlation between prices and district average income.
+
+
+```{r, message = FALSE,warning=FALSE, echo = FALSE,out.width="100%",fig.fullwidth=TRUE, fig.align='center',fig.asp = 0.45}
+
+
+#    number of listings by district
+### ==============================================================
+
+pal <- colorBin("viridis",domain=c(min(to_neigh$count_listings,na.rm = TRUE),max(to_neigh$count_listings,na.rm = TRUE)),
+                bins=round(quantile(to_neigh$count_listings, probs = seq(0,1, length.out = 10),na.rm = TRUE)/5)*5)
+
+labels <- sprintf("<strong>%s</strong>", to_neigh$AREA_NAME) %>% lapply(htmltools::HTML)
+
+to_map <- leaflet(to_neigh) %>% setView(lng = -79.34, lat = 43.695, zoom = 10.4 ) %>% addTiles() 
+to_map  %>% addPolygons(fillColor = ~pal(count_listings), weight = 2, opacity = .3, color = "blue",
+              dashArray = "3", fillOpacity = 0.7, highlight = highlightOptions(weight = 5,
+              color = "red", dashArray = "", fillOpacity = 0.7, bringToFront = TRUE),
+              label = labels, labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+                  textsize = "15px", direction = "auto")) %>%
+              addLegend(pal = pal, values = to_neigh$count_listings, opacity = 0.5, title = "No listings", position = "bottomright")  
+
+
+
+#     mean income by district
+### ==============================================================
+
+pal <- colorBin("viridis",domain=c(min(to_neigh$mean_district_income,na.rm = TRUE),max(to_neigh$mean_district_income,na.rm = TRUE)),
+                bins=c(min(to_neigh$mean_district_income),31500,34000,37500,45000,50500,54000,57500,70000,80000,max(to_neigh$mean_district_income)))
+
+labels <- sprintf("<strong>%s</strong>", to_neigh$AREA_NAME) %>% lapply(htmltools::HTML)
+
+to_map <- leaflet(to_neigh) %>% setView(lng = -79.34, lat = 43.695, zoom = 10.4 ) %>% addTiles()
+to_map  %>% addPolygons(fillColor = ~pal(mean_district_income), weight = 2, opacity = .3, color = "blue",
+              dashArray = "3", fillOpacity = 0.7, highlight = highlightOptions(weight = 5,
+              color = "red", dashArray = "", fillOpacity = 0.7, bringToFront = TRUE),
+              label = labels, labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+                  textsize = "15px", direction = "auto")) %>%
+              addLegend(pal = pal, values = to_neigh$mean_district_income, opacity = 0.5, title = "Mean income", position = "bottomright")  
+
+
+
+
+#   median 3 brd house like property price by district
+### ==============================================================
+
+pal <- colorBin("viridis",domain=c(min(to_neigh$price_3brd_house,na.rm = TRUE),max(to_neigh$price_3brd_house,na.rm = TRUE)),
+                bins=round(quantile(to_neigh$price_3brd_house, probs = seq(0,1, length.out = 10),na.rm = TRUE)/10000)*10000)
+
+labels <- sprintf("<strong>%s</strong>", to_neigh$AREA_NAME) %>% lapply(htmltools::HTML)
+
+to_map <- leaflet(to_neigh) %>% setView(lng = -79.34, lat = 43.695, zoom = 10.4 ) %>% addTiles()
+
+to_map  %>% addPolygons(fillColor = ~pal(price_3brd_house ), weight = 2, opacity = .3, color = "blue",
+              dashArray = "3", fillOpacity = 0.7, highlight = highlightOptions(weight = 5,
+              color = "red", dashArray = "", fillOpacity = 0.7, bringToFront = TRUE),
+              label = labels, labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+                  textsize = "15px", direction = "auto")) %>%
+              addLegend(pal = pal, values = to_neigh$price_3brd, opacity = 0.5, title = "Avg. price 3 & 2+1 brd, detached & semi", position = "bottomright")  
+
+
+
+#   median 3 brd condo like property price by district
+### ==============================================================
+
+
+pal <- colorBin("viridis",domain=c(min(to_neigh$price_3brd_condo,na.rm = TRUE),max(to_neigh$price_3brd_condo,na.rm = TRUE)),
+                bins=round(quantile(to_neigh$price_3brd_condo, probs = seq(0,1, length.out = 10),na.rm = TRUE)/10000)*10000)
+
+labels <- sprintf("<strong>%s</strong>", to_neigh$AREA_NAME) %>% lapply(htmltools::HTML)
+
+to_map <- leaflet(to_neigh) %>% setView(lng = -79.34, lat = 43.695, zoom = 10.4 ) %>% addTiles()
+
+to_map  %>% addPolygons(fillColor = ~pal(price_3brd_condo), weight = 2, opacity = .3, color = "blue",
+              dashArray = "3", fillOpacity = 0.7, highlight = highlightOptions(weight = 5,
+              color = "red", dashArray = "", fillOpacity = 0.7, bringToFront = TRUE),
+              label = labels, labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
+                  textsize = "15px", direction = "auto")) %>%
+              addLegend(pal = pal, values = to_neigh$price_3brd, opacity = 0.5, title = "Avg. price 3 & 2+1 brd, non detached & semi", position = "bottomright")  
+
+```
+
+
+
+
+
+# 3.  Modeling
+The data available sets us in a context where we need to estimate the price of a property given a set of numerical, ordinal and categorical features that describe the property.
+
+
+## 3.1. Imputation of missing values
+
+Because the feature "sqft" contains numerous missing values, imputation was implemented using the mice package. Of the various types of imputation methods, the semi-parametric imputation approach Predictive Mean Matching (PMM) was applied. 
+
+PMM calculations involve several steps. First, a linear regression model is estimated to predict the feature Y that contains the missing values, whereby only the observed instances are used. Second, the predicted values for the observed and missing values are calculated. Third, for each instance where Y is missing, the closest predicted values among the observed instances are found, and finally, one of these close instances is randomly chosen and the missing value is imputed with the observed value from this close instance. 
+
+PMM also allows for discrete target variables, and has been proven to be a versatile and robust method.
+
+
+## 3.2. Linear regression
+
+Linear regression is a basic and very commonly used predictive algorithm. Two main types of information can be obtained with linear regression, the extent at which a set of independent variables (X) can predict a dependent variable (Y), and which of the variables are significantly related to Y. 
+
+In it's simplest form a linear regression can be described by the formula y = c + b * x, where y is the dependent variable, c is a constant (y-intercept), b is the regression coefficient (slope), and x is the independent, or predictive variable. Linear regression assumes linearity between X and the mean of Y, homoscedasticity, meaning that the variance of the residual is the same for any value of X, and independence of the predictive variables X. 
+
+
+Linear regression can accommodate both numerical and categorical explanatory variables (the categorical predictors are transformed into dummy variables).
+
+To understand and asses the potential effect of the dimensionality reduction methods  we employed three methods:
+
+a) a linear regression which includes all explanatory variables without any dimensionality reduction method  
+
+b) a stepwise  model for explanatory variable selection based on the Akaike Information Criterion (depends on the model log likelihood and penalizes the addition of parameters)
+
+c) a lasso-ridge penalty approach which, once our likelihood function, which penalizes large coefficients (their square value). As such, only high impact variables, that make it through the penalty, will be retained. To fine tune the weight the penalty function and ensure the result is robust to changes in the  train data, we use 10 folds cross validation.
+
+
+### 3.2.1. Linear regression - model estimation and dimesion reduction ????
+Torsten and Robin, please input here the model final form and discussion of it's features
+
+```{r include=TRUE, message=FALSE, warning=FALSE,echo = FALSE}
+
+```
+
+
+
+### 3.2.2. Linear regression - model diagnostics
+Torsten and Robin, please input here the model diagnostics results
+
+
+```{r include=TRUE, message=FALSE, warning=FALSE,echo = FALSE}
+
+```
+
+
+
+
+## 3.3. Random Forest Model
+Random Forest is an ensembling machine learning algorithm which consists in generating multiple decision trees based on random sampling of the data and the predictor variables and then combining their output. for every explanatory variable a classification is  generated. 
+Based on belonging to specific classes of a randomly selected set of variable the decision three is built. The user decides how many variables are used in constructing the decision tree. The construction of the classes for each variables accommodates both categorical and numerical variables (continuous or discontinuous) .
+
+The random sampling serves to de-correlate the trees and subsequently reduce the Variance by averaging them and avoid overfitting. The user decides how many trees are used for model averaging. The random forest model needs to be tuned with respect to the number of decision trees and the number of variables randomly sampled at each stage.
+
+In our project, we used the random forest model as a compariosn to the linear regression model with respect to the selection of explanatory variables , estimation errors and model Fit.
+
+One can observe that the distance to subway, number of bathrooms and average district income occur across all random forest models.
+
+For detached, district scores on community, education and trasit apper in addition to the above
+
+For condos, district scores on shopping and health appear in addition to the above.
+
+
+### 3.3.1. Random Forest - model estimation results
+```{r include=TRUE, message=FALSE, warning=FALSE,echo = FALSE}
+# ===========================================
+# Random tree Model and parameter tuning
+
+library(randomForest)
+
+RANDOMFOREST_model_vars<-c('final_price_log','type','bedrooms_ag','bedrooms_bg','bedrooms_all','bathrooms','pool_available','dist_2_subway_min',
+'mean_district_income',
+"TO_rank_safety"   ,      "TO_rank_transit"        ,      "TO_rank_shopping"       ,     
+"TO_rank_health"   ,      "TO_rank_entertainment"   ,     "TO_rank_community"     , 
+"TO_rank_diversity",      "TO_rank_education"    ,        "TO_rank_employment")
+
+RANDOMFOREST_model_vars_1<-c('final_price_log','bedrooms_ag','bedrooms_bg','bedrooms_all','bathrooms','pool_available','dist_2_subway_min',
+'mean_district_income',
+"TO_rank_safety"   ,      "TO_rank_transit"        ,      "TO_rank_shopping"       ,     
+"TO_rank_health"   ,      "TO_rank_entertainment"   ,     "TO_rank_community"     , 
+"TO_rank_diversity",      "TO_rank_education"    ,        "TO_rank_employment")
+
+
+DF_POZ_ALL<-DF$type %in%  c('Detached','Condo Apt','Condo Townhouse','Semi-Detached','Att/Row/Twnhouse')
+DF_POZ_Att<-DF$type %in%  c('Att/Row/Twnhouse')
+DF_POZ_Detached<-DF$type %in%  c('Detached')
+DF_POZ_Condo<-DF$type %in%  c('Condo Apt')
+DF_POZ_Townhouse<-DF$type %in%  c('Condo Townhouse')
+
+
+
+RANDOMFOREST_final_ALL<-randomForest(final_price_log~.,data=DF[DF_POZ_ALL,RANDOMFOREST_model_vars],type='regression', mtry=7,ntree = 150,importance = TRUE)
+RANDOMFOREST_final_Att<-randomForest(final_price_log~.,data=DF[DF_POZ_Att,RANDOMFOREST_model_vars_1],type='regression', mtry=7,ntree = 150,importance = TRUE)
+RANDOMFOREST_final_Detached<-randomForest(final_price_log~.,data=DF[DF_POZ_Detached,RANDOMFOREST_model_vars_1],type='regression', mtry=7,ntree = 150,importance = TRUE)
+RANDOMFOREST_final_Condo<-randomForest(final_price_log~.,data=DF[DF_POZ_Condo,RANDOMFOREST_model_vars_1],type='regression', mtry=7,ntree = 150,importance = TRUE)
+RANDOMFOREST_final_Townhouse<-randomForest(final_price_log~.,data=DF[DF_POZ_Townhouse,RANDOMFOREST_model_vars_1],type='regression', mtry=7,ntree = 150,importance = TRUE)
+
+RANDOMFOREST_final_R2 <-data.frame(RANDOMFOREST_final_ALL$rsq, RANDOMFOREST_final_Att$rsq,RANDOMFOREST_final_Detached$rsq,
+                                RANDOMFOREST_final_Condo$rsq, RANDOMFOREST_final_Townhouse$rsq)
+
+
+RANDOMFOREST_final_MSE<-data.frame(RANDOMFOREST_final_ALL$mse, RANDOMFOREST_final_Att$mse,RANDOMFOREST_final_Detached$mse,
+                                RANDOMFOREST_final_Condo$mse, RANDOMFOREST_final_Townhouse$mse)
+
+matplot(as.matrix(RANDOMFOREST_final_R2 ),type = "l",pch=1,col = 1:19,main='R-squared')
+legend("bottomright",legend = names(RANDOMFOREST_final_R2 ),pch=1,col = 1:19)
+
+matplot(as.matrix(RANDOMFOREST_final_MSE),type = "l",pch=1,col = 1:19,main='MSE')
+legend("topright",legend = names(RANDOMFOREST_final_MSE),pch=1,col = 1:19)
+
+varImpPlot(RANDOMFOREST_final_ALL)
+varImpPlot(RANDOMFOREST_final_Att)
+varImpPlot(RANDOMFOREST_final_Detached)
+varImpPlot(RANDOMFOREST_final_Condo)
+varImpPlot(RANDOMFOREST_final_Townhouse)
+
+
+```
+
+
+
+
+
+
+
+### 3.2.2. Random Forest -  model diagnostics
+
+
+
+
+# 4.  Deployment
+
+The model and the shiny app could be used by a real estate company to provide potential customers with a self-serving tool that they can use prior to contacting the company. The shiny app has two customer tools available. With the first tool, potential sellers can obtain a ballpark figure value of what their house might be worth at the market. With the second tool, potential buyers can find houses for sale, based on the specified criteria (available budget, required square footage, number of bedrooms/bathrooms).
+
+In particular the sellers tool has still potential for improvement. For example, in it's current version the district-related predictors (neighborhood rankings) are not necessarily accurate representations of the attractiveness of the immediate neighborhood of the house that is for sale. Numerous of the Toronto districts are relatively large and heterogeneous. Also, each individual customer has different preferences in terms of what neighborhood criteria are more or less important to them. Finally, if environmental parameters, such as closeness to large parks and Lake Ontario, as well as neighborhood quietness and distance to major arterial roads (noise/air pollution) could be included, this tool would be potentially very valuable.
+
+Link to the shiny app:
