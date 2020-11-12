@@ -18,59 +18,23 @@ library(shiny)
 library(shinyBS)
 library(shinyWidgets)
 library(shinyjs)
-# library(maps)
 library(ggmap)
-# library(ggplot2)
 library(leaflet)
 library(scales)
 library(sp)
-# library(lattice)
-# library(dplyr)
-# library(tidyr)
-# library(caret)
-
-# library(shinythemes)
-# library(plotly)
-# library(ggplot2)
-# library(gridExtra)
-# library(dplyr)
-# library(data.table)
 library(stringr)
 library(strex)
-# library(ggplot2)
-# library(ggthemes) 
-# library(FactoMineR)
-# library(factoextra)
-# library(tidyr)
-# library(reshape2)
-# library(cluster)
-# library(class)
+library(readr)
 
-# library(rgdal)
-
-#library(htmltools)
 
 leaflet(options = leafletOptions(minZoom = 0, maxZoom = 18))  # Set value for the minZoom and maxZoom settings.
 load("./www/shinyenvdata.RData")
 distchoices <- c("All Districts", sort(to_neigh$AREA_NAME))
-register_google(key = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-betas <- c(b0 <- -507305.3772,   #(Intercept)
-           b1 <- 3.7372,         #mean_district_income
-           b2 <- -401.9158,      #district_code
-           b3 <- 590.0003,       #sqft
-           b4 <- 1254.1058,      #TO_rank_safety
-           b5 <- 2779.7949,      #TO_rank_transit
-           b6 <- 749.9727,       #TO_rank_shopping
-           b7 <- 487.0452,       #TO_rank_health
-           b8 <- 1627.2697,      #TO_rank_entertainment
-           b9 <- -176.5268,      #TO_rank_community
-           b10 <- -145.0480,     #TO_rank_diversity
-           b11 <- 24.3140,       #TO_rank_education
-           b12 <- 1056.6620)     #TO_rank_employment
+register_google(key = "AIzaSyBgAFv8Raia-xStjq5rPQUBR6R2ezRzrV8")
 
-#browser()
 # Define UI 
 ui <- bootstrapPage( theme = "styles.css",
+            
             useShinyjs(),
             tags$style(HTML(".tooltip > .tooltip-inner {
                     width: 200px;
@@ -93,6 +57,10 @@ ui <- bootstrapPage( theme = "styles.css",
                                     btnSearch = icon("search")),
                         textInput(inputId = "distvar1", label = "District"),
                         bsTooltip("addr1", "Search the number and street name first.\\nLocation will be marked on the map and the District is determined automatically.\\nThe application assumes Toronto address and will indicate if the address is not found on any District.","right"),
+                        selectInput(inputId = "typevar", label = "House Type", choices = c("Detached",
+                                            "Semi-Detached", "Att/Row/Twnhouse", "Condo Apt", "Condo Townhouse",
+                                            "Plex", "Comm Element Condo", "Link", "Co-Ownership Apt", "Co-Op Apt", "Store W/Apt/Offc")),
+                        bsTooltip("typevar", "Specify the property type.","right"),
                     ),
                     conditionalPanel(
                         condition = "input.mytask == 'findhouse'",
@@ -100,23 +68,27 @@ ui <- bootstrapPage( theme = "styles.css",
                                 icon = list(NULL, icon("dollar-sign"))),
                         selectInput(inputId = "distvar2", label = "District", choices = distchoices,
                                     selected = "All Districts"),
+                        selectInput(inputId = "typevar2", label = "House Type", choices = c("All Types", "Detached",
+                                            "Semi-Detached", "Att/Row/Twnhouse", "Condo Apt", "Condo Townhouse",
+                                            "Plex", "Comm Element Condo", "Link", "Co-Ownership Apt", "Co-Op Apt", "Store W/Apt/Offc")),
                         bsTooltip("budget1", "This is the maximum amount you are willing to spend.","right"),
                         bsTooltip("distvar2", "You may choose a specific district to find listed properties.","right"),
+                        bsTooltip("typevar2", "You may choose a specific property type or All Types","right"),
                     ),
+
+                    tags$h4(HTML("</br>House Details:")),
                     
-                    tags$h4(HTML("</br>House Description:")),
-                    column(width=5,selectInput(inputId = "bedvar", label = "No. of Bedrooms", choices = 0:20)),
-                    column(width=5,selectInput(inputId = "bathvar", label = "No. of Bathrooms", choices = seq(1, 20, by=0.5))),
+                    column(width=5,selectInput(inputId = "bedvar", label = "Bedrooms (Above Grade)", choices = 0:20)),
+                    column(width=5,selectInput(inputId = "bedvarbg", label = "Bedrooms (Below Grade)", choices = 0:20)),
+                    column(width=5,selectInput(inputId = "bathvar", label = "Bathrooms", choices = 1:15)),
                     column(width=5,selectInput(inputId = "parkvar", label = "Parking", choices = 0:15)),
                     column(width=5,numericInput(inputId = "sqftvar", label = "Area (sqft)", "1000")),
-                    column(width=8,selectInput(inputId = "typevar", label = "House Type", choices = c("All Types",
-                                "Condo Apt", "Semi-Detached", "Detached", "Condo Townhouse", "Plex", "Att/Row/Twnhouse",
-                                "Comm Element Condo", "Link", "Co-Ownership Apt", "Co-Op Apt", "Store W/Apt/Offc"))),
-                    bsTooltip("bedvar", "Indicate the minimum number of bedrooms on the property.","right"),
+                    bsTooltip("bedvar", "Indicate the minimum number of above grade bedrooms (up to code) on the property.","right"),
+                    bsTooltip("bedvarbg", "Indicate the minimum number of below grade bedrooms (NOT up to code) on the property.","right"),
                     bsTooltip("bathvar", "Indicate the minimum number of bathrooms on the property.","right"),
                     bsTooltip("parkvar", "Indicate the minimum number of parking space.","right"),
                     bsTooltip("sqftvar", "Indicate the minimum living space in Square Foot.","right"),
-                    bsTooltip("typevar", "You may choose a specific property type.","right"),
+                    
             ),
             
             conditionalPanel(
@@ -124,16 +96,6 @@ ui <- bootstrapPage( theme = "styles.css",
                 absolutePanel( class = "prediction-box", h4("Predicted price"), textOutput("houseprice")),
                 bsTooltip("houseprice", "Predicted Price of the Property","bottom"),
             ),
-            
-            # conditionalPanel(
-            #     condition = "input.mytask == 'findhouse'",
-            #     absolutePanel( class = "prediction-panel", h4(""), textOutput("Predicted price"))
-            # )
-            
-            #  textInput("var9", "Address", "1000 Kingston Ave"),
-            #  #textInput("var7", "Average House Price of District", "700000"),
-            # leafletOutput(outputId = "mymap"),
-            #leafletOutput(outputId = "mymap2")
     )
 )
 
@@ -146,7 +108,6 @@ server <- function(input, output, session) {
     
     # Reactive expression to create data frame of all input values ----
     inputData <- reactive({
-        #browser()
         if(input$mytask == "sellbid") {
             lat <- 43.6534
             lon <- -79.3841
@@ -163,7 +124,6 @@ server <- function(input, output, session) {
                 geoAddress <- as.character(addrcoord[3])
                 
                 #  find the district
-                #browser()
                 j <- 1
                 inpoly <- 0
                 while (inpoly == 0 & j <= 140) {
@@ -173,28 +133,36 @@ server <- function(input, output, session) {
                     j <- j + 1
                 }
                 if(inpoly > 0) { 
-                    neighcodname <- str_split(neighnames,"\\(")
-                    district_code <- as.numeric(gsub("[^0-9.]", "", neighcodname[[1]][2]))
-                    city_district <- str_trim(neighcodname[[1]][1])
+                    neighcodname <- parse_number(neighnames)
+                    district_code <- neighcodname
+                    city_district <- neigh_rank$area_name[neigh_rank$district_code==neighcodname]
                 } else {
                     #Address cannot be found within Toronto    
                     city_district <- "Address NOT found in Toronto"
                 }
             }
-            #browser()
             
-            col_header <- c("address", "bedroom",  "bathroom", "type", "parking", "sqft", "district_code", "city_district", "long", "lat")
-            value = list(geoAddress, as.numeric(input$bedvar), as.numeric(input$bathvar), input$typevar, as.numeric(input$parkvar),
-                        input$sqftvar, district_code, city_district, lon, lat)
+            col_header <- c("bathrooms", "sqft", "parking", "type", "long", "lat", "bedrooms_ag", "bedrooms_bg",
+                            "address", "district_code", "city_district")
+            value = list(as.numeric(input$bathvar), input$sqftvar, as.numeric(input$parkvar), input$typevar, lon, lat,
+                         as.numeric(input$bedvar), as.numeric(input$bedvarbg), geoAddress, district_code, city_district)
             temp_df <- data.frame(matrix(ncol = length(col_header), nrow = 1))
             for(i in 1:length(col_header)) { temp_df[1, i] <- value[i] }
-            #temp_df <- rbind(temp_df, value)
             colnames(temp_df) <- col_header
+            
             temp_df <- merge(temp_df,neigh_rank, by="district_code")
             
+            if(temp_df$type == "Detached") {
+                temp_df$interaction_effect1 <- temp_df$sqft * temp_df$bathrooms
+                temp_df$interaction_effect2 <- temp_df$bedrooms_ag * temp_df$bathrooms
+                temp_df$interaction_effect3 <- temp_df$sqft * temp_df$mean_district_income
+                temp_df$nonlinear_effect1 <- (temp_df$bathrooms)^2
+                temp_df$nonlinear_effect2 <- (temp_df$mean_district_income)^0.5
+            }
+            
             return(temp_df)
+            
         } else if(input$mytask == "findhouse") {
-            #browser()
             
             houses_df1 <- subset(houses_df, houses_df$bedrooms_ag >= as.numeric(input$bedvar) &
                                             houses_df$bathrooms >= as.numeric(input$bathvar) &
@@ -203,11 +171,11 @@ server <- function(input, output, session) {
                                             houses_df$sqft >= input$sqftvar
             )
             if(input$distvar2 != "All Districts") {
-                distcode <- str_split_by_numbers((str_split(input$distvar2,"\\("))[[1]][2])
+                distcode <- parse_number(input$distvar2)
                 houses_df1 <- subset(houses_df1, houses_df1$district_code == distcode[[1]][1])
             }
-            if(input$typevar != "All Types") {
-                houses_df1 <- subset(houses_df1, houses_df1$type == input$typevar)
+            if(input$typevar2 != "All Types") {
+                houses_df1 <- subset(houses_df1, houses_df1$type == input$typevar2)
             }
             
             # new features from keywords in "description"
@@ -229,6 +197,7 @@ server <- function(input, output, session) {
                                             "<p>", "Area:", houses_df1$sqft, "</p>",
                                             "<p>", "Number","of","bedrooms:", houses_df1$bedrooms, "</p>",
                                             "<p>", "Number","of","bathroooms:", houses_df1$bathrooms, "</p>",
+                                            "<p>", "Number","of","parking:", houses_df1$parking, "</p>",
                                             "<p>", "Fitness", "center:", houses_df1$fitness, "</p>",
                                             "<p>", "Swimming", "pool:", houses_df1$swimming_pool, "</p>",
                                             "<p>", "Address:", houses_df1$full_address, "</p>"
@@ -240,21 +209,22 @@ server <- function(input, output, session) {
     })
     
     observeEvent(input$mytask, {
-        inpvars <- c("bedvar", "bathvar", "parkvar", "typevar", "sqftvar")
+        inpvars <- c("bedvar", "bathvar", "parkvar", "sqftvar")
         if(input$mytask == "sellbid") {
             for(x in inpvars) { 
                 disable(x)
-                disable("distvar1")
             }
+            disable("distvar1")
+            disable("typevar")
         } else if(input$mytask == "findhouse") {
             for(x in inpvars) { 
                 enable(x)
             }
+            enable("typevar2")
         }
     })
     
     observeEvent(input$addr1, {
-        #browser()
         mydata <- inputData()
         inpvars <- c("bedvar", "bathvar", "parkvar", "typevar", "sqftvar")
         if(input$addr1 == "") {
@@ -277,29 +247,22 @@ server <- function(input, output, session) {
         }
     })
     
-    # observeEvent(input$budget1, {
-    #     updateNumericInputIcon(session, "budget1", value = prettyNum(input$budget1, big.mark=",", scientific=FALSE))
-    # })
-    
     output$houseprice <- reactive({
-        #browser()
         if (input$mytask == "sellbid") {
             mydata <- inputData()
-            # calculate predicted house price here...
-            # neigh_ndx <- match(mydata$district_code, neigh_rank$district_code)
-            inpvar <- c(1, mydata$mean_district_income, mydata$district_code, mydata$sqft, mydata$safety,
-                           mydata$transit, mydata$shopping, mydata$health, mydata$entertainment, mydata$community,
-                           mydata$diversity, mydata$education, mydata$employment)
-            predprice <- dollar(sum(betas*inpvar))
-            #predprice <- as.character(dollar(600000 + 40000*mydata$bedroom + 23283*mydata$bathroom + 21870*mydata$parking))
-            return(predprice)
-        } else if(input$mytask == "findhouse") {
+            if(mydata$type == "Detached") {
+                model <- lm(final_price ~ ., data = traindetached_df)
+                final_price_predicted <- predict(model,mydata)
+            } else {
+                model <- lm(final_price ~.+ sqft:mean_district_income + sqft:type + bedrooms_ag:bathrooms + sqft:bathrooms + I(mean_district_income^0.5), data = trainnondetached_df)
+                final_price_predicted <- predict(model,mydata)
+            }
+            return(as.character(dollar(final_price_predicted)))
             
         }
     })
     
     output$map <- renderLeaflet({
-        #browser()
         mydata <- inputData()
         
         if(input$mytask == "sellbid") {
@@ -311,7 +274,6 @@ server <- function(input, output, session) {
                         labelOptions = labelOptions(style = list("font-weight" = "normal", padding = "3px 8px"),
                         textsize = "15px", direction = "auto")) 
         } else if(input$mytask == "findhouse") {
-            #browser()
             if(nrow(mydata) != 0) {
                 df_select1 <- subset(mydata, type == "Detached" | type == "Semi-Detached")
                 df_select2 <- subset(mydata, type == "Condo Apt" | type == "Condo Townhouse")
@@ -326,7 +288,6 @@ server <- function(input, output, session) {
                 }
                 to_map <- leaflet(to_neigh) %>% setView(lng = long, lat, zoom = 12 ) %>% addTiles()
             
-                #browser()
                 if(nrow(df_select1) != 0) {
                     to_map <- to_map %>% addCircleMarkers(lng = df_select1$long, lat=df_select1$lat, color = "red", radius = ~ 3,
                                  group = "Houses", label = lapply(df_select1$labels, HTML), labelOptions = (textsize = "25px"))
@@ -335,7 +296,6 @@ server <- function(input, output, session) {
                     to_map <- to_map %>% addCircleMarkers(lng = df_select2$long, lat = df_select2$lat, color = "blue", radius = ~ 3,
                                  group = "Condos", label = lapply(df_select2$labels, HTML), labelOptions = (textsize = "25px"))
                 }
-                #browser()
                 to_map %>% addLayersControl(overlayGroups = c("Houses", "Condos"), options = layersControlOptions(collapsed = FALSE))
             } else {
                 long <- -79.40603941
