@@ -30,7 +30,7 @@ library(readr)
 leaflet(options = leafletOptions(minZoom = 0, maxZoom = 18))  # Set value for the minZoom and maxZoom settings.
 load("./www/shinyenvdata.RData")
 distchoices <- c("All Districts", sort(to_neigh$AREA_NAME))
-register_google(key = "AIzaSyBgAFv8Raia-xStjq5rPQUBR6R2ezRzrV8")
+register_google(key = "xxxxxxxxxxxxxxxx-xxxxxxxxxxxxxxxxxx")
 
 # Define UI 
 ui <- bootstrapPage( theme = "styles.css",
